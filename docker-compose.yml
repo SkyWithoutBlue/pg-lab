@@ -1,0 +1,79 @@
+name: pg-lab
+
+services:
+  db:
+    build: .
+    image: pg-lab:16
+    container_name: pg-lab-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: college
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REPLICATOR_PASSWORD: ${REPLICATOR_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - archive:/archive
+      - backups:/backups
+      - ./init:/docker-entrypoint-initdb.d:ro
+    command:
+      - postgres
+      - -c
+      - listen_addresses=*
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=test ! -f /archive/%f && cp %p /archive/%f
+      - -c
+      - shared_preload_libraries=pg_stat_statements,pg_cron
+      - -c
+      - cron.database_name=college
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - log_statement=ddl
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pg-lab-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    ports:
+      - "8080:80"
+    depends_on:
+      - db
+
+  # День 11: запуск командой  docker compose --profile replica up -d standby
+  standby:
+    image: pg-lab:16
+    container_name: pg-lab-standby
+    profiles: ["replica"]
+    user: postgres
+    environment:
+      PGPASSWORD: ${REPLICATOR_PASSWORD}
+    ports:
+      - "5433:5432"
+    volumes:
+      - standbydata:/var/lib/postgresql/data
+    depends_on:
+      - db
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+          until pg_basebackup -h db -U replicator -D /var/lib/postgresql/data -R -X stream -P; do sleep 2; done
+          chmod 700 /var/lib/postgresql/data
+        fi
+        exec postgres
+
+volumes:
+  pgdata:
+  archive:
+  backups:
+  standbydata:
